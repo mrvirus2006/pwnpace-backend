@@ -4,25 +4,36 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 
 const app = express();
-
-// --- Middleware ---
 app.use(cors());
 app.use(express.json());
 
-// --- Database Connection (Serverless Optimized) ---
-// We connect outside the request to keep the connection warm
-mongoose.connect(process.env.MONGO_URI, {
-    serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds if Atlas is slow
-})
-.then(() => console.log('[+] SYSTEM SECURED: Connected to MongoDB Atlas'))
-.catch(err => console.error('[-] DATABASE ERROR:', err));
+// --- The Connection Manager ---
+// This ensures we reuse the same connection across different users
+let isConnected = false;
 
-// --- Routing Modules ---
+const connectDB = async () => {
+    if (isConnected) return; // Already connected, move on
+    try {
+        const db = await mongoose.connect(process.env.MONGO_URI);
+        isConnected = db.connections[0].readyState;
+        console.log('[+] DATABASE READY');
+    } catch (err) {
+        console.error('[-] DATABASE ERROR:', err);
+    }
+};
+
+// --- Middleware to ensure DB is connected for every request ---
+app.use(async (req, res, next) => {
+    await connectDB();
+    next();
+});
+
+// --- Routes ---
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/logs', require('./routes/logs'));
 app.use('/api/settings', require('./routes/settings'));
 
-// Status / Health Route
+// Status Route (Now it will wait for the DB before answering)
 app.get('/api/status', (req, res) => {
     res.json({
         status: "Online",
@@ -32,13 +43,4 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-// --- IMPORTANT: VERCEL EXECUTION ---
-// Do NOT use app.listen() for Vercel. 
-// We export the app and Vercel handles the rest.
 module.exports = app;
-
-// Fallback for local development
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => console.log(`Local testing on port ${PORT}`));
-}
